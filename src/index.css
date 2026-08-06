@@ -1,0 +1,178 @@
+@import 'tailwindcss';
+
+@theme {
+  /* Brand / accent scale used by the toolbar, active states, and selection handles */
+  --color-accent-50: #eef2ff;
+  --color-accent-100: #e0e7ff;
+  --color-accent-200: #c7d2fe;
+  --color-accent-300: #a5b4fc;
+  --color-accent-400: #818cf8;
+  --color-accent-500: #6366f1;
+  --color-accent-600: #4f46e5;
+  --color-accent-700: #4338ca;
+  --color-accent-800: #3730a3;
+  --color-accent-900: #312e81;
+  /* Accent text sitting directly on the app surface (not inside its own
+     colored pill/button). Distinct from accent-700, which is also used as a
+     button hover background and must stay a fixed dark indigo in both
+     themes. */
+  --color-accent-ink: #4338ca;
+
+  /* Neutral scale used by the app shell, sidebar, and panels */
+  --color-neutral-0: #ffffff;
+  --color-neutral-50: #f8fafc;
+  --color-neutral-100: #f1f5f9;
+  --color-neutral-200: #e2e8f0;
+  --color-neutral-300: #cbd5e1;
+  --color-neutral-400: #94a3b8;
+  --color-neutral-500: #64748b;
+  --color-neutral-600: #45556c;
+  --color-neutral-700: #314158;
+  --color-neutral-800: #1d293d;
+  --color-neutral-900: #0f172b;
+  --color-neutral-950: #020618;
+
+  /* Semantic feedback colors used by warnings and destructive actions */
+  --color-warning-50: #fffbeb;
+  --color-warning-500: #f59e0b;
+  --color-warning-700: #b45309;
+  --color-danger-50: #fef2f2;
+  --color-danger-500: #ef4444;
+  --color-danger-700: #b91c1c;
+
+  /* Layout radii shared by toolbar buttons, panels, and cards */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* Elevation used by floating panels, dropdowns, and modals over the canvas */
+  --shadow-toolbar:
+    0 1px 2px 0 rgb(0 0 0 / 0.06), 0 1px 3px 0 rgb(0 0 0 / 0.08);
+  --shadow-panel:
+    0 4px 6px -1px rgb(0 0 0 / 0.08), 0 2px 4px -2px rgb(0 0 0 / 0.06);
+  --shadow-modal:
+    0 20px 25px -5px rgb(0 0 0 / 0.12), 0 8px 10px -6px rgb(0 0 0 / 0.08);
+
+  /* App-specific spacing beyond the default scale */
+  --spacing-toolbar-h: 56px;
+  --spacing-sidebar-w: 220px;
+  --spacing-panel-w: 280px;
+}
+
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-neutral-0: #0f172b;
+    --color-neutral-50: #1d293d;
+    --color-neutral-100: #314158;
+    /* 200/300 stay dark -- they're used for borders and dividers, which
+       should read as subtle separators against the dark surface, not as
+       bright lines. */
+    --color-neutral-200: #3b4a63;
+    --color-neutral-300: #526176;
+    /* 400 is already legible on both light and dark surfaces (~6.5:1 here),
+       so it's left as-is. 500-800 are used for body/label/button text and
+       must flip to light values to stay readable on the dark surface. */
+    --color-neutral-500: #cbd5e1;
+    --color-neutral-600: #e2e8f0;
+    --color-neutral-700: #f1f5f9;
+    --color-neutral-800: #f8fafc;
+    --color-neutral-900: #f1f5f9;
+    --color-neutral-950: #ffffff;
+    --color-accent-ink: #a5b4fc;
+  }
+}
+
+html {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  html {
+    color-scheme: dark;
+  }
+}
+
+/* Native <select> popups don't inherit the app's flipped neutral scale the
+   way in-DOM elements do -- pin explicit colors so options stay legible
+   against the browser's own (light or dark) popup chrome. */
+select option {
+  background-color: var(--color-neutral-0);
+  color: var(--color-neutral-900);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Enlarge hit targets on touch/tablet input (page-editor spec, responsive layout). */
+@media (pointer: coarse) {
+  button,
+  [role='button'],
+  input[type='checkbox'],
+  input[type='radio'] {
+    min-height: 40px;
+    min-width: 40px;
+  }
+}
+
+/* Page-turn transition for the assembled/reading-order print preview. The
+   outgoing spread sits in an absolutely-positioned overlay above the
+   already-rendered incoming spread and rotates away about its spine edge;
+   `backface-visibility: hidden` makes it vanish once it passes 90deg rather
+   than mirror-flip, so no separate fade keyframe is needed. */
+.page-flip-perspective {
+  perspective: 2200px;
+}
+
+.page-flip-layer {
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.page-flip-layer.next {
+  transform-origin: left center;
+  animation: booklet-page-flip-next 520ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.page-flip-layer.prev {
+  transform-origin: right center;
+  animation: booklet-page-flip-prev 520ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes booklet-page-flip-next {
+  from {
+    transform: rotateY(0deg);
+  }
+  to {
+    transform: rotateY(-140deg);
+  }
+}
+
+@keyframes booklet-page-flip-prev {
+  from {
+    transform: rotateY(0deg);
+  }
+  to {
+    transform: rotateY(140deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-flip-layer.next,
+  .page-flip-layer.prev {
+    animation: none;
+    opacity: 0;
+    transition: opacity 150ms ease-out;
+  }
+}
