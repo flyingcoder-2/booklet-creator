@@ -4,6 +4,13 @@ import { importImage, isSupportedImageType } from '../assets/importImage'
 import { bookletPageSize, type Margins } from '../imposition/geometry'
 import type { ImageObject, ObjectId } from '../model/types'
 import {
+  ImportAbortedError,
+  importPdf,
+  isPdfFile,
+  type ImportedPdfPage,
+} from '../pdf-import/importPdf'
+import { EncryptedPdfError, InvalidPdfError } from '../pdf-import/pdfDocument'
+import {
   computeObjectDestRect,
   fitToPageFraction,
   type PixelRect,
@@ -30,6 +37,26 @@ const GRID_SPACING_PT = 20
 
 type FabricImageObject = fabric.FabricImage & { data?: { objectId: ObjectId } }
 
+/** Turns a PDF import failure into something a user can act on. */
+function pdfImportErrorMessage(err: unknown, fileName: string): string {
+  if (err instanceof EncryptedPdfError) {
+    return `"${fileName}" is password-protected and cannot be imported.`
+  }
+  if (err instanceof InvalidPdfError) {
+    return `"${fileName}" could not be read as a PDF.`
+  }
+  if (isStorageError(err)) {
+    return `"${fileName}" could not be imported: browser storage is full. Free up space, or save and reopen the project.`
+  }
+  return `"${fileName}" could not be imported.`
+}
+
+function isStorageError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false
+  const name = (err as { name?: unknown }).name
+  return name === 'QuotaExceededError' || name === 'NotAllowedError'
+}
+
 function pxMargins(margins: Margins): Margins {
   return {
     top: margins.top * RENDER_SCALE,
@@ -43,6 +70,7 @@ export default function PageEditor() {
   const project = useProjectStore((s) => s.project)
   const updateObject = useProjectStore((s) => s.updateObject)
   const addObject = useProjectStore((s) => s.addObject)
+  const addPagesWithImages = useProjectStore((s) => s.addPagesWithImages)
   const removeObject = useProjectStore((s) => s.removeObject)
   const reorderObjects = useProjectStore((s) => s.reorderObjects)
   const duplicatePage = useProjectStore((s) => s.duplicatePage)
@@ -88,6 +116,11 @@ export default function PageEditor() {
     null,
   )
   const [isDraggingOver, setIsDraggingOver] = useState(false)
+  const [pdfImport, setPdfImport] = useState<{
+    completed: number
+    total: number
+  } | null>(null)
+  const pdfAbortRef = useRef<AbortController | null>(null)
 
   const cropModeObjectId = view.cropModeObjectId
 
@@ -310,15 +343,66 @@ export default function PageEditor() {
     })
   }, [activePage, project.objects, pageSizePx, margins])
 
-  // --- Image import -------------------------------------------------------
+  // --- Image and PDF import -----------------------------------------------
+
+  const importPdfFile = useCallback(
+    async (file: File) => {
+      const controller = new AbortController()
+      pdfAbortRef.current = controller
+      setPdfImport({ completed: 0, total: 0 })
+
+      try {
+        let imported: ImportedPdfPage[] = []
+        for await (const event of importPdf(file, paperSize, {
+          signal: controller.signal,
+          // Ids are content hashes, so an aborted import can produce one that
+          // existing pages already reference -- those must survive the sweep.
+          isAssetReferenced: (assetId) =>
+            Boolean(useProjectStore.getState().project.assets[assetId]),
+        })) {
+          if (event.type === 'progress') {
+            setPdfImport({ completed: event.completed, total: event.total })
+          } else {
+            imported = event.pages
+          }
+        }
+        // Committed only once the whole document succeeded: one undo step, and
+        // no half-imported project if anything failed along the way.
+        if (imported.length > 0) {
+          addPagesWithImages(
+            imported.map((page) => ({
+              assetId: page.assetId,
+              assetMeta: page.meta,
+              placement: page.placement,
+            })),
+          )
+        }
+      } catch (err) {
+        if (err instanceof ImportAbortedError) return // cancelled: nothing to report
+        setRejectedFileMessage(pdfImportErrorMessage(err, file.name))
+      } finally {
+        pdfAbortRef.current = null
+        setPdfImport(null)
+      }
+    },
+    [paperSize, addPagesWithImages],
+  )
+
+  const cancelPdfImport = useCallback(() => {
+    pdfAbortRef.current?.abort()
+  }, [])
 
   const importFiles = useCallback(
     async (files: FileList | File[]) => {
       if (!activePageId) return
       for (const file of Array.from(files)) {
+        if (isPdfFile(file)) {
+          await importPdfFile(file)
+          continue
+        }
         if (!isSupportedImageType(file.type)) {
           setRejectedFileMessage(
-            `"${file.name}" is not a supported image type (PNG, JPEG, WebP).`,
+            `"${file.name}" is not a supported file type (PDF, PNG, JPEG, WebP).`,
           )
           continue
         }
@@ -339,7 +423,7 @@ export default function PageEditor() {
         })
       }
     },
-    [activePageId, addObject, paperSize, pageSizePt],
+    [activePageId, addObject, paperSize, pageSizePt, importPdfFile],
   )
 
   const replaceSelected = useCallback(
@@ -647,7 +731,7 @@ export default function PageEditor() {
         <input
           ref={uploadInputRef}
           type="file"
-          accept="image/png,image/jpeg,image/webp"
+          accept="application/pdf,image/png,image/jpeg,image/webp"
           multiple
           className="hidden"
           onChange={(e) => {
@@ -827,6 +911,37 @@ export default function PageEditor() {
         </div>
       )}
 
+      {pdfImport && (
+        <div
+          className="flex items-center gap-3 border-b border-accent-500/40 bg-accent-50 px-3 py-1.5 text-xs text-accent-ink"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="shrink-0">
+            {pdfImport.total === 0
+              ? 'Reading PDF...'
+              : `Importing PDF: page ${pdfImport.completed} of ${pdfImport.total}`}
+          </span>
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-accent-200">
+            <div
+              className="h-full rounded-full bg-accent-600 transition-[width] duration-200"
+              style={{
+                width:
+                  pdfImport.total === 0
+                    ? '0%'
+                    : `${Math.round((pdfImport.completed / pdfImport.total) * 100)}%`,
+              }}
+            />
+          </div>
+          <button
+            onClick={cancelPdfImport}
+            className="shrink-0 rounded-md border border-accent-500/40 px-2 py-0.5 hover:bg-accent-100"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-1 items-center justify-center overflow-auto bg-neutral-100 p-6">
         <div
           ref={containerRef}
@@ -852,7 +967,9 @@ export default function PageEditor() {
             !isDraggingOver &&
             !isCropping && (
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
-                <p className="text-sm text-neutral-400">Drag an image here</p>
+                <p className="text-sm text-neutral-400">
+                  Drag an image or PDF here
+                </p>
                 <p className="text-xs text-neutral-400">or</p>
                 <button
                   className="pointer-events-auto rounded-md bg-accent-600 px-3 py-1.5 text-sm text-white hover:bg-accent-700"

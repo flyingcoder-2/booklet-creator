@@ -82,6 +82,85 @@ describe('page actions', () => {
     ).toBe(1)
   })
 
+  it('addPagesWithImages appends pages in order without touching existing ones', () => {
+    const { addObject, addPagesWithImages } = useProjectStore.getState()
+    const page1 = useProjectStore.getState().project.pageOrder[0]
+    const existingObject = addObject(
+      page1,
+      'asset-existing',
+      ASSET_META,
+      PLACEMENT,
+    )
+
+    const newIds = addPagesWithImages([
+      { assetId: 'pdf-1', assetMeta: ASSET_META, placement: PLACEMENT },
+      { assetId: 'pdf-2', assetMeta: ASSET_META, placement: PLACEMENT },
+      { assetId: 'pdf-3', assetMeta: ASSET_META, placement: PLACEMENT },
+    ])
+
+    const { project } = useProjectStore.getState()
+    expect(project.pageOrder).toEqual([page1, ...newIds])
+    // The pre-existing page keeps its content untouched.
+    expect(project.pages[page1].objectOrder).toEqual([existingObject])
+    // Each new page holds exactly its own image, in import order.
+    expect(
+      newIds.map((id) => {
+        const objectId = project.pages[id].objectOrder[0]
+        return project.objects[objectId].assetId
+      }),
+    ).toEqual(['pdf-1', 'pdf-2', 'pdf-3'])
+  })
+
+  it('addPagesWithImages refcounts assets, sharing one entry across duplicate pages', () => {
+    // Content-addressed ids mean two identical PDF pages resolve to one asset.
+    useProjectStore.getState().addPagesWithImages([
+      { assetId: 'pdf-dup', assetMeta: ASSET_META, placement: PLACEMENT },
+      { assetId: 'pdf-dup', assetMeta: ASSET_META, placement: PLACEMENT },
+      { assetId: 'pdf-other', assetMeta: ASSET_META, placement: PLACEMENT },
+    ])
+
+    const { project } = useProjectStore.getState()
+    expect(project.assets['pdf-dup'].refCount).toBe(2)
+    expect(project.assets['pdf-other'].refCount).toBe(1)
+  })
+
+  it('addPagesWithImages is a single undo step for the whole batch', () => {
+    const { addObject, addPagesWithImages, undo, redo } =
+      useProjectStore.getState()
+    const page1 = useProjectStore.getState().project.pageOrder[0]
+    addObject(page1, 'asset-existing', ASSET_META, PLACEMENT)
+
+    const before = useProjectStore.getState().project
+    const newIds = addPagesWithImages(
+      Array.from({ length: 10 }, (_, i) => ({
+        assetId: `pdf-${i}`,
+        assetMeta: ASSET_META,
+        placement: PLACEMENT,
+      })),
+    )
+    expect(useProjectStore.getState().project.pageOrder).toHaveLength(11)
+
+    undo()
+    const afterUndo = useProjectStore.getState().project
+    expect(afterUndo.pageOrder).toEqual(before.pageOrder)
+    expect(afterUndo.assets['pdf-0']).toBeUndefined()
+    expect(afterUndo.assets['asset-existing'].refCount).toBe(1)
+    expect(afterUndo.activePageId).toBe(before.activePageId)
+
+    redo()
+    expect(useProjectStore.getState().project.pageOrder).toEqual([
+      page1,
+      ...newIds,
+    ])
+  })
+
+  it('addPagesWithImages with no entries is a no-op', () => {
+    const before = useProjectStore.getState().project
+    expect(useProjectStore.getState().addPagesWithImages([])).toEqual([])
+    expect(useProjectStore.getState().project).toBe(before)
+    expect(useProjectStore.getState().canUndo).toBe(false)
+  })
+
   it('reorderPages sets the new page order', () => {
     const { addPage, reorderPages } = useProjectStore.getState()
     const page1 = useProjectStore.getState().project.pageOrder[0]
@@ -140,6 +219,21 @@ describe('object actions and asset refcounting', () => {
 })
 
 describe('selectors', () => {
+  it('padding recomputes after a batch import, with no extra bookkeeping', () => {
+    const { addPagesWithImages, paddedPageCount } = useProjectStore.getState()
+    // 1 existing page + 8 imported = 9 real pages -> padded to 12.
+    addPagesWithImages(
+      Array.from({ length: 8 }, (_, i) => ({
+        assetId: `pdf-${i}`,
+        assetMeta: ASSET_META,
+        placement: PLACEMENT,
+      })),
+    )
+    expect(useProjectStore.getState().project.pageOrder).toHaveLength(9)
+    expect(paddedPageCount()).toBe(12)
+    expect(useProjectStore.getState().sheetCount()).toBe(3)
+  })
+
   it('paddedPageCount and sheetCount reflect the current real page count', () => {
     const { addPage, paddedPageCount, sheetCount } = useProjectStore.getState()
     addPage()

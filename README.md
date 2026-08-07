@@ -5,6 +5,9 @@ duplex-ready, correctly imposed PDF. Everything — editing, rendering, and PDF
 generation — runs client-side. No backend, no accounts, and no image or
 project data ever leaves your browser.
 
+Drop in images one at a time, or import a multi-page PDF and get one booklet
+page per PDF page automatically.
+
 ## Local development
 
 ```bash
@@ -63,8 +66,18 @@ project, only when printing on a different printer.
   sit slightly closer to the fold than designed.
 - **Images only.** No text tool, shapes, or drawing — this is a page-layout
   tool for photos and printed art, not a general design tool.
-- **No vector import.** SVG and PDF source files aren't supported as
-  importable images; only raster PNG/JPEG/WebP.
+- **PDFs are imported as pixels, not vectors.** An imported PDF is rasterized
+  at print resolution (300 DPI at full page size), so text in it won't stay
+  crisp if you scale it up afterwards, and nothing in it stays editable. SVG
+  isn't supported as an importable source at all.
+- **PDF import always appends pages.** Importing adds one new booklet page per
+  PDF page at the end of the booklet; it doesn't place a PDF page as an element
+  on an existing page, and it doesn't change your paper size to match the PDF.
+- **Password-protected PDFs can't be imported.** There's no password prompt —
+  encrypted documents are rejected. Remove the password first.
+- **Switching tabs pauses a PDF import.** Rasterization is driven by the
+  browser's animation frames, which browsers suspend for hidden tabs, so a long
+  import makes no progress until you switch back.
 - **RGB output only.** No CMYK color conversion or ICC color management —
   colors are whatever your printer driver does with the RGB values in the
   PDF.

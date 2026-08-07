@@ -43,6 +43,13 @@ export function createEmptyProject(): Project {
   }
 }
 
+/** One new page carrying a single already-stored image, for batch creation. */
+export interface NewPageWithImage {
+  assetId: AssetId
+  assetMeta: Omit<AssetMeta, 'id' | 'refCount'>
+  placement: Omit<ImageObject, 'id' | 'assetId'>
+}
+
 export interface ProjectStore {
   project: Project
   canUndo: boolean
@@ -52,6 +59,7 @@ export interface ProjectStore {
   updateSettings: (patch: Partial<Project['settings']>) => void
 
   addPage: () => PageId
+  addPagesWithImages: (entries: NewPageWithImage[]) => PageId[]
   deletePage: (pageId: PageId) => void
   duplicatePage: (pageId: PageId) => PageId
   reorderPages: (pageOrder: PageId[]) => void
@@ -142,6 +150,38 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         draft.activePageId = page.id
       })
       return page.id
+    },
+
+    // Appends N pages in one mutation, so a whole PDF import is a single undo
+    // step rather than N of them, and the sidebar re-renders once (design.md D4).
+    addPagesWithImages: (entries) => {
+      if (entries.length === 0) return []
+
+      const created = entries.map((entry) => ({
+        entry,
+        pageId: generateId(),
+        objectId: generateId(),
+      }))
+
+      mutate((draft) => {
+        for (const { entry, pageId, objectId } of created) {
+          draft.assets = retainAsset(
+            draft.assets,
+            entry.assetId,
+            entry.assetMeta,
+          )
+          draft.objects[objectId] = {
+            id: objectId,
+            assetId: entry.assetId,
+            ...entry.placement,
+          }
+          draft.pages[pageId] = { id: pageId, objectOrder: [objectId] }
+          draft.pageOrder.push(pageId)
+        }
+        draft.activePageId = created[0].pageId
+      })
+
+      return created.map((c) => c.pageId)
     },
 
     deletePage: (pageId) => {
